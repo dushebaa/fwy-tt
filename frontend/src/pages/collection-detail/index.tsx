@@ -1,11 +1,13 @@
 import { useParams } from "react-router-dom"
-import { Content, StyledForm, Wrapper } from "./styles"
+import { Content, StyledForm, TokenCard, TokenCardWrapper, Wrapper } from "./styles"
 import { getReducedAddress } from "../../helpers"
 import { FormProvider, useForm } from "react-hook-form"
 import { SimpleInput } from "../../components"
 import { useWaitForTransactionReceipt, useWriteContract } from "wagmi"
 import collectionTokenAbi from "src/abi/collectionToken.json"
 import { FormInputs } from "./types"
+import useSWR from "swr"
+import { MintedTokenResponse } from "../../common/types"
 
 const CollectionDetailPage = () => {
     const { address } = useParams()
@@ -13,6 +15,8 @@ const CollectionDetailPage = () => {
     const { data: hash, writeContract, isPending } = useWriteContract()
     const { isLoading, data: transactionOutput } = useWaitForTransactionReceipt({ hash })
 
+    const { data: tokensMinted, isLoading: tokensMintedLoading } = useSWR(`api/tokens-minted/${address?.toLowerCase()}`)
+    console.log(tokensMinted, tokensMintedLoading)
 
     const onSubmit = async (data: FormInputs) => {
         writeContract({
@@ -48,6 +52,16 @@ const CollectionDetailPage = () => {
                     </StyledForm>
                 </FormProvider>
                 {transactionOutput ? <span>Success!</span> : null}
+
+                {tokensMinted?.length ? <TokenCardWrapper>
+                    {tokensMinted.map((item: MintedTokenResponse, index: number) => (
+                        <TokenCard key={index}>
+                            <span>Recipient: {getReducedAddress(item.Recipient)}</span>
+                            <span>TokenId: {item.TokenId}</span>
+                            <div>TokenUri: {item.TokenUri}</div>
+                        </TokenCard>
+                    ))}
+                </TokenCardWrapper> : <span>Nothing minted here yet.</span>}
             </Content>
         </Wrapper>
     )

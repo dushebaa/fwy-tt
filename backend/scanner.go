@@ -3,20 +3,19 @@ package main
 import (
 	"context"
 	"fmt"
-	"log"
+	"math/big"
+	"strings"
+	"sync"
 
 	"github.com/ethereum/go-ethereum"
-	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/ethclient"
 )
 
 type ScannerConfig struct {
-	NodeURL              string
-	ContractAddresses    []common.Address
-	CollectionFactoryAbi *abi.ABI
-	CollectionTokenAbi   *abi.ABI
+	NodeURL   string
+	Contracts *[]SContract
 }
 
 type LogCollectionCreated struct {
@@ -25,13 +24,55 @@ type LogCollectionCreated struct {
 	Symbol     string
 }
 
+type LogTokenMinted struct {
+	Collection common.Address
+	Recipient  common.Address
+	TokenId    big.Int
+	TokenUri   string
+}
+
 type Scanner struct {
-	config       ScannerConfig
-	client       *ethclient.Client
-	logs         chan types.Log
-	subscription *ethereum.Subscription
+	config        ScannerConfig
+	client        *ethclient.Client
+	logs          chan types.Log
+	subscriptions *[]Subscription
+	wg            sync.WaitGroup
+	ctx           context.Context
 
 	collectionCreatedLogs []LogCollectionCreated
+	tokensMintedLogs      map[string][]LogTokenMinted
+}
+
+func (s *Scanner) CreateSubscriptions(sContracts []SContract) (*[]Subscription, error) {
+	subs := []Subscription{}
+	for _, sContract := range sContracts {
+		sContractAddresses := []common.Address{sContract.ContractAddress}
+
+		topicsFilter := [][]common.Hash{sContract.sTopics}
+		query := ethereum.FilterQuery{
+			Addresses: sContractAddresses,
+			Topics:    topicsFilter,
+		}
+
+		logs := make(chan types.Log)
+		sub, err := s.client.SubscribeFilterLogs(context.Background(), query, logs)
+		if err != nil {
+			return nil, err
+		}
+
+		for _, sEvent := range sContract.sEvents {
+			sSub := Subscription{
+				sSub:       sub,
+				sLogs:      &logs,
+				sContract:  &sContract,
+				sEventName: sEvent,
+			}
+
+			subs = append(subs, sSub)
+		}
+	}
+
+	return &subs, nil
 }
 
 func NewScanner(config ScannerConfig) (*Scanner, error) {
@@ -40,53 +81,120 @@ func NewScanner(config ScannerConfig) (*Scanner, error) {
 		return nil, err
 	}
 
-	query := ethereum.FilterQuery{
-		Addresses: config.ContractAddresses,
+	sc := &Scanner{
+		config: config,
+		client: client,
+		wg:     sync.WaitGroup{},
+
+		tokensMintedLogs: make(map[string][]LogTokenMinted),
 	}
 
-	logs := make(chan types.Log)
-	sub, err := client.SubscribeFilterLogs(context.Background(), query, logs)
+	subs, err := sc.CreateSubscriptions(*config.Contracts)
 	if err != nil {
-		log.Fatal(err)
+		return nil, err
 	}
 
-	return &Scanner{
-		config:                config,
-		client:                client,
-		logs:                  logs,
-		subscription:          &sub,
-		collectionCreatedLogs: []LogCollectionCreated{},
-	}, nil
+	sc.subscriptions = subs
+	return sc, nil
 }
 
-func (s *Scanner) OnLogsRecieved(vLog types.Log) error {
-	collectionCreatedEventRaw, err := s.config.CollectionFactoryAbi.Unpack("CollectionCreated", vLog.Data)
+func (s *Scanner) OnLogsReceived(vLog types.Log, sub Subscription) error {
+	fmt.Println("Received event:", sub.sEventName)
+	txLogsRaw, err := sub.sContract.ContractAbi.Unpack(sub.sEventName, vLog.Data)
 	if err != nil {
 		return err
 	}
 
-	// dirty way to convert unpacked abi into a struct. Definitely never use
-	// something like this for actual tx scanners
-	collectionCreatedEvent := LogCollectionCreated{
-		Collection: collectionCreatedEventRaw[0].(common.Address),
-		Name:       collectionCreatedEventRaw[1].(string),
-		Symbol:     collectionCreatedEventRaw[2].(string),
+	switch sub.sEventName {
+	case "CollectionCreated":
+		collectionCreatedEvent := LogCollectionCreated{
+			Collection: txLogsRaw[0].(common.Address),
+			Name:       txLogsRaw[1].(string),
+			Symbol:     txLogsRaw[2].(string),
+		}
+		s.collectionCreatedLogs = append(s.collectionCreatedLogs, collectionCreatedEvent)
+
+		collectionSContract := SContract{
+			sEvents: []string{"TokenMinted"},
+			sTopics: []common.Hash{common.HexToHash("0xc9fee7cd4889f66f10ff8117316524260a5242e88e25e0656dfb3f4196a21917")},
+		}
+		err = collectionSContract.init(
+			txLogsRaw[0].(common.Address),
+			"abi/collectionToken.json",
+		)
+		if err != nil {
+			return err
+		}
+		sub, err := s.CreateSubscriptions([]SContract{collectionSContract})
+		if err != nil {
+			return err
+		}
+		// subscribe to collection nft mint events
+		s.AddSubscription((*sub)[0])
+	case "TokenMinted":
+		tokenAddress := txLogsRaw[0].(common.Address)
+		tokenMintedEvent := LogTokenMinted{
+			Collection: tokenAddress,
+			Recipient:  txLogsRaw[1].(common.Address),
+			TokenId:    *txLogsRaw[2].(*big.Int),
+			TokenUri:   txLogsRaw[3].(string),
+		}
+		tokenAddressLowercase := strings.ToLower(tokenAddress.Hex())
+		s.tokensMintedLogs[tokenAddressLowercase] = append(s.tokensMintedLogs[tokenAddressLowercase], tokenMintedEvent)
 	}
 
-	s.collectionCreatedLogs = append(s.collectionCreatedLogs, collectionCreatedEvent)
 	return nil
+}
+
+func (s *Scanner) AddSubscription(sub Subscription) error {
+	for {
+		select {
+		case <-s.ctx.Done():
+			return s.ctx.Err()
+		case err := <-sub.sSub.Err():
+			return err
+		case vLog := <-*sub.sLogs:
+			s.OnLogsReceived(vLog, sub)
+		}
+	}
 }
 
 func (s *Scanner) Scan(ctx context.Context) error {
 	fmt.Println("Scanner initialized...")
-	for {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case err := <-(*s.subscription).Err():
+
+	s.ctx = ctx
+	errChan := make(chan error, len(*s.subscriptions))
+
+	for _, sub := range *s.subscriptions {
+		s.wg.Add(1)
+		go func(sub Subscription) {
+			defer s.wg.Done()
+			for {
+				select {
+				case <-s.ctx.Done():
+					errChan <- s.ctx.Err()
+					return
+				case err := <-sub.sSub.Err():
+					errChan <- err
+					return
+				case vLog := <-*sub.sLogs:
+					s.OnLogsReceived(vLog, sub)
+				}
+			}
+		}(sub)
+	}
+
+	go func() {
+		s.wg.Wait()
+		close(errChan)
+	}()
+
+	for err := range errChan {
+		if err != nil {
 			return err
-		case vLog := <-s.logs:
-			s.OnLogsRecieved(vLog)
 		}
 	}
+
+	return nil
+
 }
