@@ -1,0 +1,11 @@
+# BE
+backend/.env
+
+# FE
+frontend/.env
+frontend/node_modules
+
+# CO
+contracts/cache
+contracts/out
+contracts/lib
