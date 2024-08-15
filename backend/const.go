@@ -1,0 +1,12 @@
+package main
+
+const (
+	EVENT_COLLECTION_CREATED_NAME = "CollectionCreated"
+	EVENT_TOKEN_MINTED_NAME       = "TokenMinted"
+
+	ABI_COLLECTION_FACTORY_PATH = "abi/collectionFactory.json"
+	ABI_COLLECTION_TOKEN_PATH   = "abi/collectionToken.json"
+
+	EVENT_COLLECTION_CREATED_TOPIC = "0x3454b57f2dca4f5a54e8358d096ac9d1a0d2dab98991ddb89ff9ea1746260617"
+	EVENT_TOKEN_MINTED_TOPIC       = "0xc9fee7cd4889f66f10ff8117316524260a5242e88e25e0656dfb3f4196a21917"
+)

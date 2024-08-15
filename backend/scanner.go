@@ -106,7 +106,7 @@ func (s *Scanner) OnLogsReceived(vLog types.Log, sub Subscription) error {
 	}
 
 	switch sub.sEventName {
-	case "CollectionCreated":
+	case EVENT_COLLECTION_CREATED_NAME:
 		collectionCreatedEvent := LogCollectionCreated{
 			Collection: txLogsRaw[0].(common.Address),
 			Name:       txLogsRaw[1].(string),
@@ -115,12 +115,12 @@ func (s *Scanner) OnLogsReceived(vLog types.Log, sub Subscription) error {
 		s.collectionCreatedLogs = append(s.collectionCreatedLogs, collectionCreatedEvent)
 
 		collectionSContract := SContract{
-			sEvents: []string{"TokenMinted"},
-			sTopics: []common.Hash{common.HexToHash("0xc9fee7cd4889f66f10ff8117316524260a5242e88e25e0656dfb3f4196a21917")},
+			sEvents: []string{EVENT_TOKEN_MINTED_NAME},
+			sTopics: []common.Hash{common.HexToHash(EVENT_TOKEN_MINTED_TOPIC)},
 		}
 		err = collectionSContract.init(
 			txLogsRaw[0].(common.Address),
-			"abi/collectionToken.json",
+			ABI_COLLECTION_TOKEN_PATH,
 		)
 		if err != nil {
 			return err
@@ -131,7 +131,7 @@ func (s *Scanner) OnLogsReceived(vLog types.Log, sub Subscription) error {
 		}
 		// subscribe to collection nft mint events
 		s.AddSubscription((*sub)[0])
-	case "TokenMinted":
+	case EVENT_TOKEN_MINTED_NAME:
 		tokenAddress := txLogsRaw[0].(common.Address)
 		tokenMintedEvent := LogTokenMinted{
 			Collection: tokenAddress,

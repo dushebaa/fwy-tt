@@ -19,14 +19,17 @@ func main() {
 
 	factoryContractAddress := os.Getenv("FACTORY_CONTRACT_ADDRESS")
 	var factorySContractTopics []common.Hash
-	factorySContractTopics = append(factorySContractTopics, common.HexToHash("0x3454b57f2dca4f5a54e8358d096ac9d1a0d2dab98991ddb89ff9ea1746260617"))
-	factorySContractEvents := []string{"CollectionCreated"}
+	factorySContractTopics = append(factorySContractTopics, common.HexToHash(EVENT_COLLECTION_CREATED_TOPIC))
+	factorySContractEvents := []string{EVENT_COLLECTION_CREATED_NAME}
 
 	factorySContract := SContract{
 		sEvents: factorySContractEvents,
 		sTopics: factorySContractTopics,
 	}
-	err = factorySContract.init(common.HexToAddress(factoryContractAddress), "abi/collectionFactory.json")
+	err = factorySContract.init(
+		common.HexToAddress(factoryContractAddress),
+		ABI_COLLECTION_FACTORY_PATH,
+	)
 	if err != nil {
 		log.Fatal(err)
 	}

@@ -36,7 +36,7 @@ const MainPage = () => {
                             </button>
                         </CollectionCard>
                     ))}
-                </CollectionCardWrapper> : <span>Nothing found 😔</span>}
+                </CollectionCardWrapper> : (isLoading ? null : <span>Nothing found 😔</span>)}
             </LowerBlock>
         </Wrapper>
     )
